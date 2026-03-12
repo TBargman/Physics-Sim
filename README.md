@@ -1,2 +1,2 @@
 # Physics-Sim
-An exploration of collision detection methods and vector math.
+An personal exploration of collision detection methods and vector math. Written in plain JS using Canvas API.
