@@ -58,13 +58,13 @@ class vec2 {
     subtract(other) {
         return new vec2(this.x - other.x, this.y - other.y);
     }
-    scale(m) {
-        return new vec2(this.x * m, this.y * m);
+    scale(n) {
+        return new vec2(this.x * n, this.y * n);
     }
-    reflect(normal) {
+    reflect(axis) {
         // v' = v - 2*(v · n)*n
-        const coeff = 2 * this.dot(normal);
-        const r = normal.scale(coeff);
+        const coeff = 2 * this.dot(axis);
+        const r = axis.scale(coeff);
         return this.subtract(r);
     }
     

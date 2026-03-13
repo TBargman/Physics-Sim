@@ -1,22 +1,17 @@
 "use strict";
 
-//import {drawText} from "../lib/drawing.js";
 import {point, vec2} from "./vectorMath.js";
 
-const select = e => document.querySelector(e);
 const coinToss = () => Math.random() > 0.5;
 const rndNeg = num => num * (coinToss() ? 1 : -1);
-const log = (...args) => {
-    if (logging){
-        console.log(...args);
-    }
-};
+const rndBetween = (min, max) => Math.random() * (max - min) + min;
+const log = (...args) => { if (logging) console.log(...args); };
 
-const canvas = select("canvas");
+const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 let w, h;
 
-const targetFPS = 90;
+const targetFPS = 60;
 const targetFT = 1000 / targetFPS;
 const clock = {
     acc: 0,
@@ -26,19 +21,18 @@ const clock = {
 const tau = Math.PI * 2;
 
 const walls = [];
-let drawWalls = true;
 let drawingWall = null;
 let wallIdCount = 0;
 const wallThickness = 20;
 
 let test = 0;
 let pause = false;
-let logging = true;
+let logging = false;
 const debug = {
     drag: false,
-    drawText: false,
+    drawText: true,
     drawVertices: false,
-    drawEdgeNormals: true,
+    drawEdgeNormals: false,
     text: "",
     verts: [],
     lines: []
@@ -55,7 +49,7 @@ const ball = {
     py: 0,
     dx: 0,
     dy: 0,
-    speed: 1,
+    speed: 4,
     radius: 18,
     project: function(vec) {
         const p = this.x * vec.x + this.y * vec.y;
@@ -94,25 +88,22 @@ const ball = {
             
             // 1. Get edge normal projections
             // only need 2 for rects/squares
-            for (let i = 0; i < 4; i++) {
+            for (let i = 0; i < 2; i++) {
                 const e = w.edges[i];
                 // project ball onto edge normal
                 const [bmin, bmax] = this.project(e.normal);
                 // project wall verts onto edge normal
                 const [wmin, wmax] = w.project(e.normal);
-                debug.text += `Edge${i+1}:\n`;
                 // compare projections, get min overlap + axis
                 // collision = bmin < wmax && bmax > wmin
                 if (bmin < wmax) {
                     let o = wmax - bmin;
-                    debug.text += `     wmax - bmin = ${o}\n`;
                     if (o < minOverlap) {
                         minOverlap = o;
                         minOverlapAxis = e.normal;
                     }
                     if (bmax > wmin) {
                         o = bmax - wmin;
-                        debug.text += `     bmax - wmin = ${o}\n`;
                         if (o < minOverlap) {
                             minOverlap = o;
                             minOverlapAxis = e.normal;
@@ -138,53 +129,42 @@ const ball = {
                 }
             }
             d = Math.sqrt(minD);
-            const dUnit = new vec2(minDx / d, minDy / d);
+            const ud = new vec2(minDx / d, minDy / d);
             
             // ball projection
-            const [bmin, bmax] = this.project(dUnit);
+            const [bmin, bmax] = this.project(ud);
             // project wall verts
-            const [wmin, wmax] = w.project(dUnit);
+            const [wmin, wmax] = w.project(ud);
             
-            debug.text += "Nearest Vertex:\n";
             // compare
             if (bmin < wmax) {
                 let o = wmax - bmin;
-                debug.text += `     wmax - bmin = ${o}\n`;
                 if (o < minOverlap) {
                     minOverlap = o;
-                    minOverlapAxis = dUnit;
+                    minOverlapAxis = ud;
                 }
                 if (bmax > wmin) {
                     o = bmax - wmin;
-                    debug.text += `     bmax - wmin = ${o}\n`;
                     if (o < minOverlap) {
                         minOverlap = o;
-                        minOverlapAxis = dUnit;
+                        minOverlapAxis = ud;
                     }
                 } else vCollision = false;
             } else vCollision = false;
             
-            debug.text += `\nmin overlap:
-     ${minOverlap}
-collision vector:
-     x: ${minOverlapAxis.x}
-     y: ${minOverlapAxis.y}\n`;
-            
             // 3. Final check
             if (eCollision && vCollision) {
                 this.colliding = true;
-                /*debug.text = `
-collision vector
-x: ${minOverlapAxis.x.toFixed(2)}
-y: ${minOverlapAxis.y.toFixed(2)}
-overlap: ${minOverlap}`;*/
+                const collisionVec = minOverlapAxis.flipped();
                 
                 // 4. Resolve
+                // not great
+                this.x -= this.dx * minOverlap;
+                this.y -= this.dy * minOverlap;
                 
                 // 5. Reflect
                 let dir = new vec2(this.dx, this.dy);
-                dir = dir.reflect(minOverlapAxis.flipped());
-                
+                dir = dir.reflect(collisionVec);
                 this.dx = dir.x;
                 this.dy = dir.y;
                 
@@ -234,8 +214,7 @@ class wall {
         /* edges format:
             id: id,
             v: [vertexA, vertexB],
-            nx: normalX,
-            ny: normalY */
+            normal: vec2 */
     }
     place() {
         wallIdCount++;
@@ -243,14 +222,14 @@ class wall {
         
         // get vertices from start/end points
         const normal = this.end.subtract(this.start).normalize().getNormal();
-        const t = normal.scale(wallThickness / 2);
+        const t = normal.scale(wallThickness / 2); // translation
         
         // set vertices
         this.vertices = [
-            new point(this.start.x + t.x, this.start.y + t.y),
-            new point(this.end.x + t.x, this.end.y + t.y),
-            new point(this.end.x - t.x, this.end.y - t.y),
-            new point(this.start.x - t.x, this.start.y - t.y)
+            this.start.add(t),
+            this.end.add(t),
+            this.end.subtract(t),
+            this.start.subtract(t)
         ];
         
         // set edges + normals
@@ -262,7 +241,6 @@ class wall {
             this.edges.push({id: i+1, v: [a, b], normal: n});
         }
         walls.push(this);
-        log(this.edges);
     }
     project(vec) {
         let min = Infinity;
@@ -332,9 +310,8 @@ function handleDown(e) {
     ptr.px = ptr.x;
     ptr.py = ptr.y;
     
-    if (drawWalls) drawingWall = new wall(ptr.x, ptr.y);
-    
-    if (debug.drag) {
+    if (!debug.drag) drawingWall = new wall(ptr.x, ptr.y);
+    else {
         ball.x = ptr.x;
         ball.y = ptr.y;
     }
@@ -349,7 +326,7 @@ function handleMove(e) {
         ptr.y = e.clientY;
     } else return;
     
-    if (drawWalls) {
+    if (drawingWall) {
         drawingWall.end.x = ptr.x;
         drawingWall.end.y = ptr.y;
     }
@@ -360,7 +337,7 @@ function handleUp(e) {
     ptr.dx = 0;
     ptr.dy = 0;
     
-    if (drawWalls && drawingWall) {
+    if (drawingWall) {
         const dist = (ptr.x - ptr.sx) ** 2 + (ptr.y - ptr.sy) ** 2;
         if (dist > wallThickness ** 2) drawingWall.place();
     }
@@ -386,34 +363,19 @@ function setCanvasSize() {
     ctx.scale(dpr, dpr);
 }
 
-function drawText(text, corner) {
-    if (!corner) corner = "BL";
+function drawText(text) {
     const margin = 12;
     const lineSpace = 15;
     ctx.lineWidth = 2;
-    //ctx.strokeStyle = "#000000";
     ctx.fillStyle = "#000000";
     
-    const qy = corner[0];
-    const qx = corner[1];
     const lines = text.split("\n");
-    let x, y;
-    
-    if (qy === "T") y = margin;
-    else y = h - margin - ((lines.length - 1) * lineSpace);
-    if (qx === "L") {
-        x = margin;
-        ctx.textAlign = "left";
-    } else {
-        x = w - margin;
-        ctx.textAlign = "right";
-    }
+    const y = h - margin - ((lines.length - 1) * lineSpace);
     
     for (let l = 0; l < lines.length; l++) {
         const st = lines[l];
         const ly = y + lineSpace * l;
-        //ctx.strokeText(st, x, ly);
-        ctx.fillText(st, x, ly);
+        ctx.fillText(st, margin, ly);
     }
 }
 
@@ -427,34 +389,29 @@ function drawEdgeNormal(edge) {
     // start + end verts
     const a = edge.v[0];
     const b = edge.v[1];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const sx = a.x + dx / 2;
-    const sy = a.y + dy / 2;
-    const ex = sx + edge.normal.x * len;
-    const ey = sy + edge.normal.y * len;
+    const d = b.subtract(a);
+    const start = a.add(d.scale(0.5));
+    const end = start.add(edge.normal.scale(len));
     
     // arrow verts
-    const p1x = sx + edge.normal.x * (len + arrowH);
-    const p1y = sy + edge.normal.y * (len + arrowH);
-    const p2x = ex - edge.normal.y * arrowW;
-    const p2y = ey + edge.normal.x * arrowW;
-    const p3x = ex + edge.normal.y * arrowW;
-    const p3y = ey - edge.normal.x * arrowW;
+    const p1 = start.add(edge.normal.scale(len + arrowH));
+    const translate = edge.normal.getNormal().scale(arrowW);
+    const p2 = end.subtract(translate);
+    const p3 = end.add(translate);
     
     ctx.strokeStyle = "#dd3333";
     ctx.fillStyle = "#dd3333";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(ex, ey);
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
     ctx.stroke();
     
     ctx.beginPath();
-    ctx.moveTo(p1x, p1y);
-    ctx.lineTo(p2x, p2y);
-    ctx.lineTo(p3x, p3y);
-    ctx.fill(); /**/
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.fill();
 }
 
 
@@ -468,8 +425,9 @@ function update(ts) {
     
     // pointer
     if (ptr.isDown) {
-        ptr.dx = ptr.x - ptr.px;
-        ptr.dy = ptr.y - ptr.py;
+        ptr.dx = Math.cos(ptr.x - ptr.px);
+        ptr.dy = Math.sin(ptr.y - ptr.py);
+        debug.text = `${ptr.dx}\n${ptr.dy}`;
         ptr.px = ptr.x;
         ptr.py = ptr.y;
     }
@@ -483,7 +441,7 @@ function draw(inter) {
     for (let wall of walls) wall.draw();
     ball.draw();
     
-    if (ptr.isDown && drawWalls) {
+    if (ptr.isDown) {
         ctx.strokeStyle = "#b0000066";
         ctx.lineWidth = wallThickness;
         ctx.beginPath();
@@ -493,7 +451,7 @@ function draw(inter) {
     }
     
     // debug
-    if (debug.drawText) drawText(debug.text, "BL");
+    if (debug.drawText) drawText(debug.text);
     if (debug.verts.length) {
         ctx.fillStyle = "#ff3300";
         for (let v of debug.verts) {
@@ -538,8 +496,8 @@ ctx.font = "700 13px sans-serif";
 
 ball.dx = rndNeg(Math.random());
 ball.dy = rndNeg(Math.sqrt(1 - ball.dx * ball.dx));
-ball.x = w / 2;
-ball.y = h / 2;
+ball.x = rndBetween(40, w - 40);
+ball.y = rndBetween(40, h - 40);
 
 // Events
 
@@ -555,7 +513,6 @@ canvas.addEventListener("pointerup", handleUp);
 ////// RUN //////
 
 test1();
-//setInterval(test1, 4000);
 
 requestAnimationFrame(ts => clock.pts = ts);
 requestAnimationFrame(run);
