@@ -19,17 +19,18 @@ const clock = {
 };
 
 const tau = Math.PI * 2;
+const friction = 0.99;
+const screenWalls = "bounce"; // bounce/wrap
 
 const walls = [];
 let drawingWall = null;
 let wallIdCount = 0;
-const wallThickness = 20;
+const wallThickness = 12;
 
 let test = 0;
 let pause = false;
 let logging = false;
 const debug = {
-    drag: false,
     drawText: true,
     drawVertices: false,
     drawEdgeNormals: false,
@@ -39,18 +40,20 @@ const debug = {
 };
 
 
-////// BALL //////
+//////////////////////////////////////////////////
+////////////////////// BALL //////////////////////
 
 const ball = {
     colliding: false,
+    dragging: false,
+    radius: 24,
+    speed: 4,
     x: 0,
     y: 0,
     px: 0,
     py: 0,
     dx: 0,
     dy: 0,
-    speed: 4,
-    radius: 18,
     project: function(vec) {
         const p = this.x * vec.x + this.y * vec.y;
         const min = p - this.radius;
@@ -59,25 +62,43 @@ const ball = {
     },
     update: function() {
         
-        // move
+        // move, handle screen boundaries
         this.px = this.x;
         this.py = this.y;
-        if (this.x + this.radius < -1)    this.x = this.radius + w;
-        if (this.y + this.radius < -1)    this.y = this.radius + h;
-        if (this.x - this.radius > w + 1) this.x = -this.radius;
-        if (this.y - this.radius > h + 1) this.y = -this.radius;
+        if (screenWalls === "wrap") {
+            if (this.x + this.radius < -1)    this.x = this.radius + w;
+            if (this.y + this.radius < -1)    this.y = this.radius + h;
+            if (this.x - this.radius > w + 1) this.x = -this.radius;
+            if (this.y - this.radius > h + 1) this.y = -this.radius;
+        } else if (screenWalls === "bounce") {
+            if (this.x - this.radius < 0) {
+                this.x = this.radius;
+                this.dx = -this.dx;
+            }
+            if (this.y - this.radius < 0) {
+                this.y = this.radius;
+                this.dy = -this.dy;
+            }
+            if (this.x + this.radius > w) {
+                this.x = w - this.radius;
+                this.dx = -this.dx;
+            }
+            if (this.y + this.radius > h) {
+                this.y = h - this.radius;
+                this.dy = -this.dy;
+            }
+        }
         
-        if (debug.drag && ptr.isDown) {
-            this.x = ptr.x;
-            this.y = ptr.y - 300;
-            this.dx = this.x - this.px;
-            this.dy = this.x - this.py;
+        if (ptr.isDown && this.dragging) {
+            this.x = ptr.x - ptr.ox;
+            this.y = ptr.y - ptr.oy;
         } else {
             this.x += this.dx * this.speed;
             this.y += this.dy * this.speed;
+            if (Math.abs(this.speed) < 0.01) this.speed = 0;
+            else this.speed *= friction;
         }
         
-        debug.text = "";
         // check collisions
         // separating axis theorem baybeeeee
         for (let w of walls) {
@@ -154,11 +175,11 @@ const ball = {
             
             // 3. Final check
             if (eCollision && vCollision) {
-                this.colliding = true;
+                //this.colliding = true;
                 const collisionVec = minOverlapAxis.flipped();
                 
                 // 4. Resolve
-                // not great
+                // not great lol
                 this.x -= this.dx * minOverlap;
                 this.y -= this.dy * minOverlap;
                 
@@ -186,9 +207,9 @@ const ball = {
         }
         ctx.fillStyle = this.colliding ? "#ff2f2f44" : "#30cd9f";
         ctx.strokeStyle = this.colliding ? "#c1000077" : "#0a7c67";
-        ctx.lineWidth = 4; // increases radius btw
+        ctx.lineWidth = 6; // increases radius btw
         ctx.beginPath();
-        ctx.arc(tx, ty, this.radius - 1.5, 0, tau);
+        ctx.arc(tx, ty, this.radius - 3, 0, tau);
         ctx.stroke();
         ctx.fill();
         if (debug.drawVertices) {
@@ -201,35 +222,32 @@ const ball = {
 };
 
 
-////// WALL CLASS //////
+////////////////////////////////////////////////
+////////////////// WALL CLASS //////////////////
 
 class wall {
     constructor(startx, starty) {
         this.id = null;
+        this.selected = false;
         this.start = new vec2(startx, starty);
         this.end   = new vec2(startx, starty);
-        
         this.vertices = [];
         this.edges = [];
-        /* edges format:
-            id: id,
-            v: [vertexA, vertexB],
-            normal: vec2 */
     }
     place() {
         wallIdCount++;
         this.id = wallIdCount;
         
         // get vertices from start/end points
-        const normal = this.end.subtract(this.start).normalize().getNormal();
-        const t = normal.scale(wallThickness / 2); // translation
+        const normal = this.end.subtract(this.start).normalized().getNormal();
+        const translate = normal.scale(wallThickness / 2);
         
         // set vertices
         this.vertices = [
-            this.start.add(t),
-            this.end.add(t),
-            this.end.subtract(t),
-            this.start.subtract(t)
+            this.start.add(translate),
+            this.end.add(translate),
+            this.end.subtract(translate),
+            this.start.subtract(translate)
         ];
         
         // set edges + normals
@@ -237,7 +255,7 @@ class wall {
             const a = this.vertices[i];
             const b = this.vertices[(i + 1) % 4];
             const d = new vec2(b.x - a.x, b.y - a.y);
-            const n = d.normalize().getNormal();
+            const n = d.normalized().getNormal();
             this.edges.push({id: i+1, v: [a, b], normal: n});
         }
         walls.push(this);
@@ -280,10 +298,12 @@ class wall {
 }
 
 
-////// POINTER //////
+/////////////////////////////////////////////////
+//////////////////// POINTER ////////////////////
 
 const ptr = {
     isDown: false,
+    speed: 0,
     x: 0,
     y: 0,
     sx: 0, // start
@@ -310,10 +330,16 @@ function handleDown(e) {
     ptr.px = ptr.x;
     ptr.py = ptr.y;
     
-    if (!debug.drag) drawingWall = new wall(ptr.x, ptr.y);
-    else {
-        ball.x = ptr.x;
-        ball.y = ptr.y;
+    // check if clicked ball
+    const bdx = ptr.x - ball.x;
+    const bdy = ptr.y - ball.y;
+    const ballDist = bdx * bdx + bdy * bdy;
+    if (ballDist < ball.radius * ball.radius) {
+        ball.dragging = true;
+        ptr.ox = bdx;
+        ptr.oy = bdy;
+    } else {
+        drawingWall = new wall(ptr.x, ptr.y);
     }
 }
 
@@ -333,24 +359,28 @@ function handleMove(e) {
 }
 
 function handleUp(e) {
-    ptr.isDown = false;
-    ptr.dx = 0;
-    ptr.dy = 0;
+    if (ball.dragging) {
+        ball.dx = ptr.dx;
+        ball.dy = ptr.dy;
+        ball.speed = ptr.speed;
+        ball.dragging = false;
+    }
     
     if (drawingWall) {
         const dist = (ptr.x - ptr.sx) ** 2 + (ptr.y - ptr.sy) ** 2;
         if (dist > wallThickness ** 2) drawingWall.place();
     }
-    drawingWall = null;
     
-    if (debug.drag) {
-        ball.dx = 0;
-        ball.dy = 0;
-    }
+    drawingWall = null;
+    ptr.dx = 0;
+    ptr.dy = 0;
+    ptr.speed = 0;
+    ptr.isDown = false;
 }
 
 
-////// CANVAS + DRAWING //////
+//////////////////////////////////////////////////
+//////////////// CANVAS + DRAWING ////////////////
 
 function setCanvasSize() {
     const dpr = window.devicePixelRatio;
@@ -364,22 +394,21 @@ function setCanvasSize() {
 }
 
 function drawText(text) {
+    // draws in bottom-left corner
     const margin = 12;
     const lineSpace = 15;
     ctx.lineWidth = 2;
     ctx.fillStyle = "#000000";
     
     const lines = text.split("\n");
-    const y = h - margin - ((lines.length - 1) * lineSpace);
+    const starty = h - margin - ((lines.length - 1) * lineSpace);
     
     for (let l = 0; l < lines.length; l++) {
         const st = lines[l];
-        const ly = y + lineSpace * l;
+        const ly = starty + lineSpace * l;
         ctx.fillText(st, margin, ly);
     }
 }
-
-
 
 function drawEdgeNormal(edge) {
     const len = 15;
@@ -394,10 +423,10 @@ function drawEdgeNormal(edge) {
     const end = start.add(edge.normal.scale(len));
     
     // arrow verts
-    const p1 = start.add(edge.normal.scale(len + arrowH));
+    const v1 = start.add(edge.normal.scale(len + arrowH));
     const translate = edge.normal.getNormal().scale(arrowW);
-    const p2 = end.subtract(translate);
-    const p3 = end.add(translate);
+    const v2 = end.subtract(translate);
+    const v3 = end.add(translate);
     
     ctx.strokeStyle = "#dd3333";
     ctx.fillStyle = "#dd3333";
@@ -408,14 +437,15 @@ function drawEdgeNormal(edge) {
     ctx.stroke();
     
     ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.lineTo(p3.x, p3.y);
+    ctx.moveTo(v1.x, v1.y);
+    ctx.lineTo(v2.x, v2.y);
+    ctx.lineTo(v3.x, v3.y);
     ctx.fill();
 }
 
 
-////// ENGINE //////
+//////////////////////////////////////////////////
+///////////////////// ENGINE /////////////////////
 
 function update(ts) {
     log(`TS: [${ts}]`);
@@ -425,9 +455,16 @@ function update(ts) {
     
     // pointer
     if (ptr.isDown) {
-        ptr.dx = Math.cos(ptr.x - ptr.px);
-        ptr.dy = Math.sin(ptr.y - ptr.py);
-        debug.text = `${ptr.dx}\n${ptr.dy}`;
+        // track direction
+        const dx = ptr.x - ptr.px;
+        const dy = ptr.y - ptr.py;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const nx = dx / d;
+        const ny = dy / d;
+        ptr.speed = d;
+        ptr.dx = isNaN(nx) ? 0 : nx;
+        ptr.dy = isNaN(ny) ? 0 : ny;
+        
         ptr.px = ptr.x;
         ptr.py = ptr.y;
     }
@@ -441,7 +478,7 @@ function draw(inter) {
     for (let wall of walls) wall.draw();
     ball.draw();
     
-    if (ptr.isDown) {
+    if (ptr.isDown && !ball.dragging) {
         ctx.strokeStyle = "#b0000066";
         ctx.lineWidth = wallThickness;
         ctx.beginPath();
@@ -488,7 +525,8 @@ function run(ts) {
 }
 
 
-////// INIT //////
+//////////////////////////////////////////////////
+////////////////////// INIT //////////////////////
 
 setCanvasSize();
 
@@ -510,15 +548,17 @@ canvas.addEventListener("pointermove", handleMove);
 canvas.addEventListener("pointerup", handleUp);
 
 
-////// RUN //////
+/////////////////////////////////////////////////
+////////////////////// RUN //////////////////////
 
-test1();
+//test1();
 
 requestAnimationFrame(ts => clock.pts = ts);
 requestAnimationFrame(run);
 
 
-////// TESTS //////
+/////////////////////////////////////////////////
+//////////////////// TESTS //////////////////////
 
 function test1() {
     walls.length = 0;

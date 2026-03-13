@@ -30,10 +30,13 @@ class vec2 {
         this.x = x;
         this.y = y;
     }
+    get magnitude() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+    }
     getNormal() {
         return new vec2(this.y, -this.x);
     }
-    normalize() {
+    normalized() {
         if (this.x + this.y !== 1) {
             const d = Math.sqrt(this.x * this.x + this.y * this.y);
             const x = this.x / d;
