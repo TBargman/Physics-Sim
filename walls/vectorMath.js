@@ -33,6 +33,9 @@ class vec2 {
     get magnitude() {
         return Math.sqrt(this.x * this.x + this.y * this.y);
     }
+    copy() {
+        return new vec2(this.x, this.y);
+    }
     getNormal() {
         return new vec2(this.y, -this.x);
     }

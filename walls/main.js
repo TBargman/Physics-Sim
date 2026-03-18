@@ -19,8 +19,10 @@ const clock = {
 };
 
 const tau = Math.PI * 2;
-const friction = 0.99;
-const screenWalls = "bounce"; // bounce/wrap
+const friction = 1;
+const gravity = 5;
+const restitution = 1;
+const screenWalls = "wrap"; // bounce/wrap
 
 const walls = [];
 let drawingWall = null;
@@ -46,14 +48,18 @@ const debug = {
 const ball = {
     colliding: false,
     dragging: false,
-    radius: 24,
+    radius: 20,
+    pos: new vec2(0, 0),
+    prev: new vec2(0, 0), // previous position
+    dir: new vec2(0, 0),
+    delta: new vec2(0, 0),
     speed: 4,
-    x: 0,
-    y: 0,
-    px: 0,
-    py: 0,
-    dx: 0,
-    dy: 0,
+    
+    get x() { return this.pos.x; },
+    get y() { return this.pos.y; },
+    set x(n) { this.pos.x = n; },
+    set y(n) { this.pos.y = n; },
+    
     project: function(vec) {
         const p = this.x * vec.x + this.y * vec.y;
         const min = p - this.radius;
@@ -63,8 +69,7 @@ const ball = {
     update: function() {
         
         // move, handle screen boundaries
-        this.px = this.x;
-        this.py = this.y;
+        this.prev = this.pos.copy();
         if (screenWalls === "wrap") {
             if (this.x + this.radius < -1)    this.x = this.radius + w;
             if (this.y + this.radius < -1)    this.y = this.radius + h;
@@ -73,30 +78,33 @@ const ball = {
         } else if (screenWalls === "bounce") {
             if (this.x - this.radius < 0) {
                 this.x = this.radius;
-                this.dx = -this.dx;
+                this.dir.x = -this.dir.x;
             }
             if (this.y - this.radius < 0) {
                 this.y = this.radius;
-                this.dy = -this.dy;
+                this.dir.y = -this.dir.y;
             }
             if (this.x + this.radius > w) {
                 this.x = w - this.radius;
-                this.dx = -this.dx;
+                this.dir.x = -this.dir.x;
             }
             if (this.y + this.radius > h) {
                 this.y = h - this.radius;
-                this.dy = -this.dy;
+                this.dir.y = -this.dir.y;
             }
         }
         
+        // calculate dx/dy and apply
         if (ptr.isDown && this.dragging) {
             this.x = ptr.x - ptr.ox;
             this.y = ptr.y - ptr.oy;
         } else {
-            this.x += this.dx * this.speed;
-            this.y += this.dy * this.speed;
-            if (Math.abs(this.speed) < 0.01) this.speed = 0;
+            if (Math.abs(this.speed) < 0.02) this.speed = 0;
             else this.speed *= friction;
+            const delta = this.dir.scale(this.speed);
+            
+            // apply
+            this.pos = this.pos.add(delta);
         }
         
         // check collisions
@@ -180,14 +188,11 @@ const ball = {
                 
                 // 4. Resolve
                 // not great lol
-                this.x -= this.dx * minOverlap;
-                this.y -= this.dy * minOverlap;
+                const res = this.dir.scale(minOverlap);
+                this.pos = this.pos.subtract(res);
                 
                 // 5. Reflect
-                let dir = new vec2(this.dx, this.dy);
-                dir = dir.reflect(collisionVec);
-                this.dx = dir.x;
-                this.dy = dir.y;
+                this.dir = this.dir.reflect(collisionVec.scale(restitution));
                 
                 // collide with only one wall:
                 break;
@@ -197,25 +202,22 @@ const ball = {
         }
     },
     draw: function(inter) {
-        let tx, ty; // transform/translate
-        if (inter) {
-            tx = (this.x - this.px) * inter + this.px;
-            ty = (this.y - this.py) * inter + this.py;
-        } else {
-            tx = this.x;
-            ty = this.y;
-        }
+        // transform/translate
+        const tf = inter ?
+            this.pos.subtract(this.prev).scale(inter).add(this.prev) :
+            this.pos;
+        
         ctx.fillStyle = this.colliding ? "#ff2f2f44" : "#30cd9f";
         ctx.strokeStyle = this.colliding ? "#c1000077" : "#0a7c67";
         ctx.lineWidth = 6; // increases radius btw
         ctx.beginPath();
-        ctx.arc(tx, ty, this.radius - 3, 0, tau);
+        ctx.arc(tf.x, tf.y, this.radius - 2, 0, tau);
         ctx.stroke();
         ctx.fill();
         if (debug.drawVertices) {
             ctx.fillStyle = this.colliding ? "#c1000077" : "#0a7c67";
             ctx.beginPath();
-            ctx.arc(tx, ty, 2, 0, tau);
+            ctx.arc(tf.x, tf.y, 2, 0, tau);
             ctx.fill();
         }
     }
@@ -230,7 +232,7 @@ class wall {
         this.id = null;
         this.selected = false;
         this.start = new vec2(startx, starty);
-        this.end   = new vec2(startx, starty);
+        this.end = new vec2(startx, starty);
         this.vertices = [];
         this.edges = [];
     }
@@ -330,7 +332,6 @@ function handleDown(e) {
     ptr.px = ptr.x;
     ptr.py = ptr.y;
     
-    // check if clicked ball
     const bdx = ptr.x - ball.x;
     const bdy = ptr.y - ball.y;
     const ballDist = bdx * bdx + bdy * bdy;
@@ -360,13 +361,11 @@ function handleMove(e) {
 
 function handleUp(e) {
     if (ball.dragging) {
-        ball.dx = ptr.dx;
-        ball.dy = ptr.dy;
+        ball.dir.x = ptr.dx;
+        ball.dir.y = ptr.dy;
         ball.speed = ptr.speed;
         ball.dragging = false;
-    }
-    
-    if (drawingWall) {
+    } else if (drawingWall) {
         const dist = (ptr.x - ptr.sx) ** 2 + (ptr.y - ptr.sy) ** 2;
         if (dist > wallThickness ** 2) drawingWall.place();
     }
@@ -532,8 +531,8 @@ setCanvasSize();
 
 ctx.font = "700 13px sans-serif";
 
-ball.dx = rndNeg(Math.random());
-ball.dy = rndNeg(Math.sqrt(1 - ball.dx * ball.dx));
+ball.dir.x = rndNeg(Math.random());
+ball.dir.y = rndNeg(Math.sqrt(1 - ball.dir.x * ball.dir.x));
 ball.x = rndBetween(40, w - 40);
 ball.y = rndBetween(40, h - 40);
 
@@ -570,6 +569,6 @@ function test1() {
     w.place();
     ball.x = pause ? 200 : 170;
     ball.y = 225;
-    ball.dx = 1.5;
-    ball.dy = 0;
+    ball.delta.x = 1.5;
+    ball.delta.y = 0;
 }
