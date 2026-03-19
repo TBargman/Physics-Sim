@@ -27,7 +27,7 @@ const screenWalls = "wrap"; // bounce/wrap
 const walls = [];
 let drawingWall = null;
 let wallIdCount = 0;
-const wallThickness = 12;
+const wallThickness = 15;
 
 let test = 0;
 let pause = false;
@@ -36,9 +36,11 @@ const debug = {
     drawText: true,
     drawVertices: false,
     drawEdgeNormals: false,
+    drawCollisions: false,
     text: "",
     verts: [],
-    lines: []
+    lines: [],
+    arrows: []
 };
 
 
@@ -48,7 +50,7 @@ const debug = {
 const ball = {
     colliding: false,
     dragging: false,
-    radius: 20,
+    radius: 25,
     pos: new vec2(0, 0),
     prev: new vec2(0, 0), // previous position
     dir: new vec2(0, 0),
@@ -56,8 +58,8 @@ const ball = {
     speed: 4,
     
     get x() { return this.pos.x; },
-    get y() { return this.pos.y; },
     set x(n) { this.pos.x = n; },
+    get y() { return this.pos.y; },
     set y(n) { this.pos.y = n; },
     
     project: function(vec) {
@@ -94,7 +96,7 @@ const ball = {
             }
         }
         
-        // calculate dx/dy and apply
+        // calculate delta
         if (ptr.isDown && this.dragging) {
             this.x = ptr.x - ptr.ox;
             this.y = ptr.y - ptr.oy;
@@ -107,8 +109,6 @@ const ball = {
             this.pos = this.pos.add(delta);
         }
         
-        // check collisions
-        // separating axis theorem baybeeeee
         for (let w of walls) {
             let eCollision = true;
             let vCollision = true;
@@ -183,13 +183,17 @@ const ball = {
             
             // 3. Final check
             if (eCollision && vCollision) {
-                //this.colliding = true;
-                const collisionVec = minOverlapAxis.flipped();
+                this.colliding = true;
                 
                 // 4. Resolve
-                // not great lol
-                const res = this.dir.scale(minOverlap);
+                let collisionVec = minOverlapAxis;
+                // make sure collisionVec is correct dir
+                const dir = w.center.subtract(this.pos);
+                if (dir.dot(collisionVec) < 0) collisionVec = collisionVec.flipped();
+                
+                const res = collisionVec.scale(minOverlap);
                 this.pos = this.pos.subtract(res);
+                if (debug.drawCollisions) debug.arrows.push([this.pos, collisionVec]);
                 
                 // 5. Reflect
                 this.dir = this.dir.reflect(collisionVec.scale(restitution));
@@ -200,6 +204,8 @@ const ball = {
                 this.colliding = false;
             }
         }
+        // check collisions
+        // separating axis theorem baybeeeee
     },
     draw: function(inter) {
         // transform/translate
@@ -207,11 +213,16 @@ const ball = {
             this.pos.subtract(this.prev).scale(inter).add(this.prev) :
             this.pos;
         
-        ctx.fillStyle = this.colliding ? "#ff2f2f44" : "#30cd9f";
-        ctx.strokeStyle = this.colliding ? "#c1000077" : "#0a7c67";
+        if (debug.drawCollisions && this.colliding) {
+            ctx.fillStyle = "#ff2f2f44";
+            ctx.strokeStyle = "#c1000077";
+        } else {
+            ctx.fillStyle = "#30cd9f";
+            ctx.strokeStyle = "#0a7c67";
+        }
         ctx.lineWidth = 6; // increases radius btw
         ctx.beginPath();
-        ctx.arc(tf.x, tf.y, this.radius - 2, 0, tau);
+        ctx.arc(tf.x, tf.y, this.radius - 3, 0, tau);
         ctx.stroke();
         ctx.fill();
         if (debug.drawVertices) {
@@ -235,6 +246,7 @@ class wall {
         this.end = new vec2(startx, starty);
         this.vertices = [];
         this.edges = [];
+        this.center = null;
     }
     place() {
         wallIdCount++;
@@ -260,6 +272,18 @@ class wall {
             const n = d.normalized().getNormal();
             this.edges.push({id: i+1, v: [a, b], normal: n});
         }
+        
+        // set center point
+        let sumX = 0;
+        let sumY = 0;
+        for (let v of this.vertices) {
+            sumX += v.x;
+            sumY += v.y;
+        }
+        sumX /= 4;
+        sumY /= 4;
+        this.center = new vec2(sumX, sumY);
+        
         walls.push(this);
     }
     project(vec) {
@@ -294,6 +318,9 @@ class wall {
                 ctx.fill();
                 ctx.fillText(String(i+1), v.x + 6, v.y + 4);
             }
+            ctx.beginPath();
+            ctx.arc(this.center.x, this.center.y, 2, 0, tau);
+            ctx.fill();
         }
     }
     
@@ -409,21 +436,18 @@ function drawText(text) {
     }
 }
 
-function drawEdgeNormal(edge) {
+function drawArrow(start, dir) {
+    // dir must be normalized
     const len = 15;
     const arrowW = 3;
     const arrowH = 5;
     
-    // start + end verts
-    const a = edge.v[0];
-    const b = edge.v[1];
-    const d = b.subtract(a);
-    const start = a.add(d.scale(0.5));
-    const end = start.add(edge.normal.scale(len));
+    // get end vertex
+    const end = start.add(dir.scale(len));
     
     // arrow verts
-    const v1 = start.add(edge.normal.scale(len + arrowH));
-    const translate = edge.normal.getNormal().scale(arrowW);
+    const v1 = end.add(dir.scale(arrowH));
+    const translate = dir.getNormal().scale(arrowW);
     const v2 = end.subtract(translate);
     const v3 = end.add(translate);
     
@@ -442,6 +466,15 @@ function drawEdgeNormal(edge) {
     ctx.fill();
 }
 
+function drawEdgeNormal(edge) {
+    // start at edge center
+    const a = edge.v[0];
+    const b = edge.v[1];
+    const d = b.subtract(a);
+    const start = a.add(d.scale(0.5));
+    drawArrow(start, edge.normal);
+}
+
 
 //////////////////////////////////////////////////
 ///////////////////// ENGINE /////////////////////
@@ -451,6 +484,7 @@ function update(ts) {
     debug.text = "";
     debug.verts = [];
     debug.lines = [];
+    debug.arrows = [];
     
     // pointer
     if (ptr.isDown) {
@@ -504,6 +538,11 @@ function draw(inter) {
             ctx.moveTo(l[0], l[1]);
             ctx.lineTo(l[2], l[3]);
             ctx.stroke();
+        }
+    }
+    if (debug.arrows.length) {
+        for (let a of debug.arrows) {
+            drawArrow(a[0], a[1]);
         }
     }
 }
